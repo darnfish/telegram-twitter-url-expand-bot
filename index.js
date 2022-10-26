@@ -1,16 +1,17 @@
 import * as dotenv from "dotenv";
 import Tgfancy from "tgfancy";
-import { fetchTweet } from "./tweet-parser.js";
-import { trackEvent } from "./analytics.js";
+import { fetchTweet } from "./helpers/tweet-parser.js";
+import { trackEvent } from "./helpers/analytics.js";
+import { createSettings, getSettings, updateSettings } from "./helpers/api.js";
 
 dotenv.config();
-
+export const API_ENDPOINT = `${process.env.API_URL}?access_token=${process.env.API_TOKEN}`;
 const TWITTER_INSTAGRAM_URL =
   /https?:\/\/(?:www\.)?(?:mobile\.)?(?:twitter\.com\/(?:#!\/)?(\w+)\/status(es)?\/(\d+)|instagram\.com\/(?:p|reel)\/([A-Za-z0-9-_]+))/gim;
 const bot = new Tgfancy(process.env.BOT_TOKEN, { polling: true });
 
 // Match Twitter or Instagram links
-bot.onText(TWITTER_INSTAGRAM_URL, (msg) => {
+bot.onText(TWITTER_INSTAGRAM_URL, async (msg) => {
   // Get the current Chat ID
   const chatId = msg.chat.id;
   // Get message text to parse links from
@@ -103,4 +104,41 @@ bot.on("callback_query", async (answer) => {
         expandLink(newLink);
       });
   }
+});
+
+// Handle settings
+bot.onText(/^\/autoexpandon/, async (msg) => {
+  // Get the current Chat ID
+  const chatId = msg.chat.id;
+  const settings = await getSettings(chatId).then((data) => data);
+
+  if (settings) {
+    if (!settings.autoexpand) {
+      updateSettings(settings.id, true);
+    }
+  } else {
+    createSettings(chatId, true);
+  }
+
+  bot.sendMessage(chatId, `✅ I will auto-expand Twitter & Instagram links in this chat.`, {
+    reply_to_message_id: msg.message_id,
+  });
+});
+
+bot.onText(/^\/autoexpandoff/, async (msg) => {
+  // Get the current Chat ID
+  const chatId = msg.chat.id;
+  const settings = await getSettings(chatId).then((data) => data);
+
+  if (settings) {
+    if (settings.autoexpand) {
+      updateSettings(settings.id, false);
+    }
+  } else {
+    createSettings(chatId, false);
+  }
+
+  bot.sendMessage(chatId, `❌ I will no longer auto-expand Twitter & Instagram links in this chat.`, {
+    reply_to_message_id: msg.message_id,
+  });
 });
