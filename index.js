@@ -3,12 +3,13 @@ import Tgfancy from "tgfancy";
 import { fetchTweet } from "./helpers/tweet-parser.js";
 import { trackEvent } from "./helpers/analytics.js";
 import { createSettings, getSettings, updateSettings } from "./helpers/api.js";
+import { askToExpand } from "./actions/ask-to-expand.js";
 
 dotenv.config();
 export const API_ENDPOINT = `${process.env.API_URL}?access_token=${process.env.API_TOKEN}`;
 const TWITTER_INSTAGRAM_URL =
   /https?:\/\/(?:www\.)?(?:mobile\.)?(?:twitter\.com\/(?:#!\/)?(\w+)\/status(es)?\/(\d+)|instagram\.com\/(?:p|reel)\/([A-Za-z0-9-_]+))/gim;
-const bot = new Tgfancy(process.env.BOT_TOKEN, { polling: true });
+export const bot = new Tgfancy(process.env.BOT_TOKEN, { polling: true });
 
 // Match Twitter or Instagram links
 bot.onText(TWITTER_INSTAGRAM_URL, async (msg) => {
@@ -16,30 +17,37 @@ bot.onText(TWITTER_INSTAGRAM_URL, async (msg) => {
   const chatId = msg.chat.id;
   // Get message text to parse links from
   const msgText = msg.text;
-  // Iterate through all matched links in the message
-  msgText.match(TWITTER_INSTAGRAM_URL).forEach((link) => {
-    const isInstagram = link.includes("instagram.com");
-    const platform = isInstagram ? "Instagram post" : "Tweet";
+  // Get settings for this chat
+  const settings = await getSettings(chatId).then((data) => data);
 
-    bot.sendMessage(chatId, `Expand this ${platform}?`, {
-      reply_to_message_id: msg.message_id,
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: "✅ Yes",
-              callback_data: link.replace("mobile.", ""),
-              // callback_data has a 64 byte limit!!!
-            },
-            {
-              text: "❌ No",
-              callback_data: isInstagram ? "no.instagram" : "no.twitter",
-            },
-          ],
-        ],
-      },
+  const askToExpandAllLinksInMessage = async () => {
+    msgText.match(TWITTER_INSTAGRAM_URL).forEach((link) => {
+      const isInstagram = link.includes("instagram.com");
+      askToExpand(msg, chatId, link, isInstagram);
     });
-  });
+  };
+
+  if (!!settings) {
+    // If settings exist, check if this chat has autoexpand enabled
+    if (settings.autoexpand) {
+      // Iterate through all matched links in the message
+      msgText.match(TWITTER_INSTAGRAM_URL).forEach((link) => {
+        const isInstagram = link.includes("instagram.com");
+        console.log("link should autoexpand in this chat right here");
+        console.log(msg.from);
+        // @msg.from.username || msg.from.first_name (and msg.from.last_name if it exists)
+        trackEvent(isInstagram ? "instagram.link.autoexpand" : "twitter.link.autoexpand");
+      });
+    } else {
+      // Iterate through all matched links in the message
+      askToExpandAllLinksInMessage();
+    }
+  } else {
+    // If settings don’t exist, create default settings for this chat
+    createSettings(chatId, false);
+    // Iterate through all matched links in the message
+    askToExpandAllLinksInMessage();
+  }
 });
 
 // React to inline keyboard reply
@@ -64,6 +72,8 @@ bot.on("callback_query", async (answer) => {
   }
 
   const expandLink = (url) => {
+    // TODO: if autoexpand is enabled, do not include undo option and don’t reply to a deleted message
+    // reply_to_message_id: null ??
     bot.editMessageText(url, {
       chat_id: chatId,
       message_id: msgId,
@@ -123,6 +133,8 @@ bot.onText(/^\/autoexpandon/, async (msg) => {
   bot.sendMessage(chatId, `✅ I will auto-expand Twitter & Instagram links in this chat.`, {
     reply_to_message_id: msg.message_id,
   });
+
+  trackEvent("command.autoexpand.on");
 });
 
 bot.onText(/^\/autoexpandoff/, async (msg) => {
@@ -141,6 +153,8 @@ bot.onText(/^\/autoexpandoff/, async (msg) => {
   bot.sendMessage(chatId, `❌ I will no longer auto-expand Twitter & Instagram links in this chat.`, {
     reply_to_message_id: msg.message_id,
   });
+
+  trackEvent("command.autoexpand.off");
 });
 
 bot.onText(/^\/admin/, async (msg) => {
@@ -149,11 +163,13 @@ bot.onText(/^\/admin/, async (msg) => {
 
   bot.sendMessage(
     chatId,
-    `You need to give this bot admin permissions to automatically delete messages when expanding links.`,
+    `An admin of this chat needs to give this bot admin permissions to automatically delete messages when expanding links.`,
     {
       reply_to_message_id: msg.message_id,
     }
   );
+
+  trackEvent("command.admin");
 });
 
 bot.onText(/^\/source/, async (msg) => {
@@ -167,4 +183,6 @@ bot.onText(/^\/source/, async (msg) => {
       reply_to_message_id: msg.message_id,
     }
   );
+
+  trackEvent("command.sourceCode");
 });
